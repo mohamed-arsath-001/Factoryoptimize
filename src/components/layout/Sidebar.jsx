@@ -9,12 +9,13 @@ import {
     FileText,
     Factory,
     LogOut,
+    Trash2,
 } from 'lucide-react';
 import { usePlans } from '../../context/PlansContext';
 import { groupPlansByMonth, formatDate } from '../../utils/helpers';
 
 export default function Sidebar() {
-    const { plans } = usePlans();
+    const { plans, removePlan } = usePlans();
     const [historyOpen, setHistoryOpen] = useState(true);
     const location = useLocation();
     const grouped = groupPlansByMonth(plans);
@@ -87,19 +88,33 @@ export default function Sidebar() {
                                             {month}
                                         </p>
                                         {monthPlans.map((plan) => (
-                                            <NavLink
-                                                key={plan.id}
-                                                to={`/plans/${plan.id}`}
-                                                className={({ isActive }) =>
-                                                    `flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sidebar-transition ${isActive
-                                                        ? 'bg-purple-500/10 text-purple-400'
-                                                        : 'text-zinc-500 hover:text-zinc-300 hover:bg-dark-hover'
-                                                    }`
-                                                }
-                                            >
-                                                <FileText className="w-3 h-3 shrink-0" />
-                                                <span className="truncate">{plan.name || formatDate(plan.uploadDate)}</span>
-                                            </NavLink>
+                                            <div key={plan.id} className="group relative">
+                                                <NavLink
+                                                    to={`/plans/${plan.id}`}
+                                                    className={({ isActive }) =>
+                                                        `flex items-center gap-2 px-3 py-1.5 rounded-md text-xs sidebar-transition pr-8 ${isActive
+                                                            ? 'bg-purple-500/10 text-purple-400'
+                                                            : 'text-zinc-500 hover:text-zinc-300 hover:bg-dark-hover'
+                                                        }`
+                                                    }
+                                                >
+                                                    <FileText className="w-3 h-3 shrink-0" />
+                                                    <span className="truncate">{plan.name || formatDate(plan.uploadDate)}</span>
+                                                </NavLink>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.preventDefault();
+                                                        e.stopPropagation();
+                                                        if (window.confirm('Are you sure you want to delete this plan?')) {
+                                                            removePlan(plan.id);
+                                                        }
+                                                    }}
+                                                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-zinc-500 hover:text-red-400 hover:bg-dark-hover opacity-0 group-hover:opacity-100 transition-all"
+                                                    title="Delete Plan"
+                                                >
+                                                    <Trash2 className="w-3 h-3" />
+                                                </button>
+                                            </div>
                                         ))}
                                     </div>
                                 ))
@@ -109,19 +124,7 @@ export default function Sidebar() {
                 </div>
             </nav>
 
-            {/* User Section */}
-            <div className="px-3 py-3 border-t border-dark-border">
-                <div className="flex items-center gap-3 px-3 py-2">
-                    <div className="w-8 h-8 rounded-full gradient-purple flex items-center justify-center text-xs font-bold text-white">
-                        PL
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-zinc-300 truncate">Planner</p>
-                        <p className="text-[10px] text-zinc-600 truncate">planner@factoryflow.com</p>
-                    </div>
-                    <LogOut className="w-3.5 h-3.5 text-zinc-600 hover:text-zinc-400 cursor-pointer transition-colors" />
-                </div>
-            </div>
+
         </aside>
     );
 }
