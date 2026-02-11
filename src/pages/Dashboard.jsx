@@ -5,7 +5,7 @@ import BarChartComponent from '../components/charts/BarChart';
 import PieChartComponent from '../components/charts/PieChart';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { usePlans } from '../context/PlansContext';
-import { getPlanBlobs, extractStatsFromCSV } from '../utils/helpers';
+import { getPlanBlobs, extractStatsFromCSV, parseBlobToCSV } from '../utils/helpers';
 
 export default function Dashboard() {
     const { plans } = usePlans();
@@ -24,7 +24,7 @@ export default function Dashboard() {
                     } else {
                         const blobs = await getPlanBlobs(latest.id);
                         if (blobs?.optimizedBlob) {
-                            const text = await blobs.optimizedBlob.text();
+                            const text = await parseBlobToCSV(blobs.optimizedBlob);
                             const parsed = extractStatsFromCSV(text);
                             setStats(parsed);
                         }

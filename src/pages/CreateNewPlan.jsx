@@ -7,7 +7,7 @@ import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { uploadAndOptimize } from '../services/api';
 import { usePlans } from '../context/PlansContext';
-import { generateUUID, savePlanBlobs, extractStatsFromCSV, parseBlobToCSV, reorderCSV } from '../utils/helpers';
+import { generateUUID, savePlanBlobs, extractStatsFromCSV, parseBlobToCSV } from '../utils/helpers';
 
 const REQUIRED_COLUMNS = ['code', 'item_number', 'description', 'colour', 'material', 'quantity'];
 
@@ -26,47 +26,57 @@ export default function CreateNewPlan() {
         setError(null);
 
         try {
-            const { blob, filename } = await uploadAndOptimize(file);
+            // Step 1: Upload file and get optimized response from backend
+            let blob, filename;
+            try {
+                const result = await uploadAndOptimize(file);
+                blob = result.blob;
+                filename = result.filename;
+            } catch (apiErr) {
+                throw new Error(`Backend request failed: ${apiErr.message || 'Unknown network error'}`);
+            }
 
+            if (!blob) {
+                throw new Error('No data received from the optimization server.');
+            }
 
-            // Parse the optimized file (CSV or Excel) for stats
-            // We use the new helper to handle binary Excel blobs
-            const csvText = await parseBlobToCSV(blob);
-            const stats = extractStatsFromCSV(csvText);
+            // Step 2: Parse the first sheet for stats display only
+            // The original blob (with ALL sheets) is preserved for download.
+            let stats = null;
+            try {
+                const csvText = await parseBlobToCSV(blob);
+                if (csvText && csvText.trim()) {
+                    stats = extractStatsFromCSV(csvText);
+                }
+            } catch (statsErr) {
+                console.warn('Stats extraction failed (non-critical):', statsErr);
+            }
 
-            // If the original blob was Excel, we might want to store the converted CSV as the optimized blob?
-            // Or keep the original Excel blob for download?
-            // The user wants "download csv/xlsx file in a correct order".
-            // If they modify/reorder, we must generate a NEW CSV blob.
-
-            // Let's generate a new cleaned CSV blob from the parsed text to ensure consistent format
-            // This also fixes the column order if we apply reordering here
-            const reorderedText = reorderCSV(csvText);
-            const optimizedBlob = new Blob([reorderedText], { type: 'text/csv' });
-
-            // Note: If the user specifically wants the Excel file as download, 
-            // we should technically save the original `blob` if it was Excel.
-            // However, the request asked for "correct order", implying we need to regenerate it.
-            // Regenerating as CSV is safer and easier. Excel can open CSV.
-            // So we'll save the reordered CSV as the optimized blob.
-
+            // Step 3: Save the ORIGINAL blob to IndexedDB (preserves all 3 Excel sheets)
+            // Do NOT convert to CSV — that destroys the multi-sheet structure.
             const planId = generateUUID();
             const plan = {
                 id: planId,
                 name: file.name.replace(/\.[^/.]+$/, '') + ' — Optimized',
                 uploadDate: new Date().toISOString(),
                 originalFilename: file.name,
-                optimizedFilename: filename.replace('.xlsx', '.csv').replace('.xls', '.csv'), // Force CSV extension for consistency
+                optimizedFilename: filename, // Keep original extension (.xlsx)
                 stats,
             };
 
-            // Save blobs to IndexedDB, metadata to localStorage
-            await savePlanBlobs(planId, file, optimizedBlob);
+            try {
+                await savePlanBlobs(planId, file, blob);
+            } catch (dbErr) {
+                console.error('IndexedDB save failed:', dbErr);
+                throw new Error('Failed to save plan data locally. Please ensure browser storage is available.');
+            }
+
             addPlan(plan);
 
             setStep(3);
             setTimeout(() => navigate(`/plans/${planId}`), 1200);
         } catch (err) {
+            console.error('Plan generation error:', err);
             setError(err.message || 'Optimization failed. Please try again.');
             setStep(1);
         } finally {

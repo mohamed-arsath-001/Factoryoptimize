@@ -31,35 +31,103 @@ export function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
+/**
+ * Detect if a blob is an Excel file by MIME type or binary signature.
+ */
+async function isExcelBlob(blob) {
+    if (!blob) return false;
+
+    const typeCheck = blob.type.includes('spreadsheet') || blob.type.includes('excel') || blob.type.includes('openxml');
+    if (typeCheck) return true;
+
+    // Check for binary signatures
+    try {
+        const header = new Uint8Array(await blob.slice(0, 8).arrayBuffer());
+
+        // XLSX signature: PK.. (0x50 0x4B 0x03 0x04)
+        const isXLSX = header[0] === 0x50 && header[1] === 0x4B && header[2] === 0x03 && header[3] === 0x04;
+
+        // XLS signature: D0 CF 11 E0 A1 B1 1A E1
+        const isXLS = header[0] === 0xD0 && header[1] === 0xCF && header[2] === 0x11 && header[3] === 0xE0;
+
+        return isXLSX || isXLS;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Parse a blob into CSV text (first sheet only).
+ * Used for stats extraction and simple display.
+ */
 export async function parseBlobToCSV(blob) {
     if (!blob) return '';
 
-    // Check for Excel signature (PK..) or type
-    const isExcel = blob.type.includes('spreadsheet') || blob.type.includes('excel') || blob.type.includes('openxml');
-
-    // Fallback: Read first few bytes for signature if type is generic
-    if (!isExcel) {
-        const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
-        // PK.. signature for zip/xlsx
-        if (header[0] === 0x50 && header[1] === 0x4B && header[2] === 0x03 && header[3] === 0x04) {
-            return parseExcelToCSV(blob);
+    try {
+        if (await isExcelBlob(blob)) {
+            return await parseExcelFirstSheet(blob);
+        }
+        // Default: treat as text/CSV
+        return await blob.text();
+    } catch (e) {
+        console.error('Error in parseBlobToCSV:', e);
+        try {
+            return await blob.text();
+        } catch (e2) {
+            return '';
         }
     }
-
-    if (isExcel) {
-        return parseExcelToCSV(blob);
-    }
-
-    // Default: treat as text/CSV
-    return await blob.text();
 }
 
-async function parseExcelToCSV(blob) {
-    const data = await blob.arrayBuffer();
-    const workbook = read(data);
-    const firstSheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[firstSheetName];
-    return utils.sheet_to_csv(worksheet);
+/**
+ * Parse ALL sheets from an Excel blob.
+ * Returns an array of { name: string, csv: string } objects.
+ * For CSV/text blobs, returns a single-element array.
+ */
+export async function parseAllSheets(blob) {
+    if (!blob) return [];
+
+    try {
+        if (await isExcelBlob(blob)) {
+            const data = await blob.arrayBuffer();
+            const workbook = read(data);
+
+            return workbook.SheetNames.map(sheetName => ({
+                name: sheetName,
+                csv: utils.sheet_to_csv(workbook.Sheets[sheetName]),
+            }));
+        }
+
+        // Plain text/CSV — return as a single "sheet"
+        const text = await blob.text();
+        return [{ name: 'Sheet 1', csv: text }];
+    } catch (e) {
+        console.error('Error in parseAllSheets:', e);
+        // Fallback: try reading as plain text
+        try {
+            const text = await blob.text();
+            return [{ name: 'Sheet 1', csv: text }];
+        } catch (e2) {
+            return [];
+        }
+    }
+}
+
+async function parseExcelFirstSheet(blob) {
+    try {
+        const data = await blob.arrayBuffer();
+        const workbook = read(data);
+        const firstSheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[firstSheetName];
+        return utils.sheet_to_csv(worksheet);
+    } catch (e) {
+        console.error('Failed to parse Excel file, falling back to text:', e);
+        try {
+            return await blob.text();
+        } catch (e2) {
+            return '';
+        }
+    }
 }
 
 export function validateFile(file) {
@@ -90,105 +158,127 @@ export function generateUUID() {
 }
 
 export function extractStatsFromCSV(csvText) {
-    if (!csvText) return null;
-    const lines = csvText.trim().split('\n');
-    if (lines.length < 2) return null;
+    if (!csvText || typeof csvText !== 'string') return null;
 
-    const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
-    const rows = lines.slice(1).filter((l) => l.trim());
+    try {
+        const lines = csvText.trim().split('\n');
+        if (lines.length < 2) return null;
 
-    const codeIdx = headers.findIndex((h) => h === 'code' || h === 'order_code');
-    const qtyIdx = headers.findIndex((h) => h === 'quantity' || h === 'qty');
-    const machineIdx = headers.findIndex((h) => h.includes('machine'));
-    const durationIdx = headers.findIndex((h) => h.includes('duration') || h.includes('time'));
-    const shiftIdx = headers.findIndex((h) => h.includes('shift'));
-    const teamIdx = headers.findIndex((h) => h.includes('team'));
+        const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+        const rows = lines.slice(1).filter((l) => l.trim());
 
-    const uniqueOrders = new Set();
-    let totalUnits = 0;
-    let totalDuration = 0;
-    let withTeams = 0;
-    const machines = {};
-    const shifts = {};
+        if (rows.length === 0) return null;
 
-    rows.forEach((row) => {
-        const cols = row.split(',').map((c) => c.trim());
-        if (codeIdx >= 0) uniqueOrders.add(cols[codeIdx]);
-        if (qtyIdx >= 0) totalUnits += parseInt(cols[qtyIdx]) || 0;
-        if (durationIdx >= 0) totalDuration += parseFloat(cols[durationIdx]) || 0;
-        if (teamIdx >= 0 && cols[teamIdx]) withTeams++;
-        if (machineIdx >= 0 && cols[machineIdx]) {
-            const m = cols[machineIdx];
-            machines[m] = (machines[m] || 0) + 1;
-        }
-        if (shiftIdx >= 0 && cols[shiftIdx]) {
-            const s = cols[shiftIdx];
-            shifts[s] = (shifts[s] || 0) + 1;
-        }
-    });
+        const codeIdx = headers.findIndex((h) => h === 'code' || h === 'order_code');
+        const qtyIdx = headers.findIndex((h) => h === 'quantity' || h === 'qty');
+        const machineIdx = headers.findIndex((h) => h.includes('machine'));
+        const durationIdx = headers.findIndex((h) => h.includes('duration') || h.includes('time'));
+        const shiftIdx = headers.findIndex((h) => h.includes('shift'));
+        const teamIdx = headers.findIndex((h) => h.includes('team'));
 
-    return {
-        totalOrders: uniqueOrders.size || rows.length,
-        totalUnits,
-        avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
-        ordersWithTeams: withTeams,
-        machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
-        shiftDistribution: Object.entries(shifts).map(([name, value]) => ({ name, value })),
-        totalRows: rows.length,
-    };
+        const uniqueOrders = new Set();
+        let totalUnits = 0;
+        let totalDuration = 0;
+        let withTeams = 0;
+        const machines = {};
+        const shifts = {};
+
+        rows.forEach((row) => {
+            try {
+                const cols = row.split(',').map((c) => c.trim());
+                if (codeIdx >= 0) uniqueOrders.add(cols[codeIdx]);
+                if (qtyIdx >= 0) totalUnits += parseInt(cols[qtyIdx]) || 0;
+                if (durationIdx >= 0) totalDuration += parseFloat(cols[durationIdx]) || 0;
+                if (teamIdx >= 0 && cols[teamIdx]) withTeams++;
+                if (machineIdx >= 0 && cols[machineIdx]) {
+                    const m = cols[machineIdx];
+                    machines[m] = (machines[m] || 0) + 1;
+                }
+                if (shiftIdx >= 0 && cols[shiftIdx]) {
+                    const s = cols[shiftIdx];
+                    shifts[s] = (shifts[s] || 0) + 1;
+                }
+            } catch (rowErr) {
+                // Skip malformed rows
+                console.warn('Skipping malformed CSV row:', row, rowErr);
+            }
+        });
+
+        return {
+            totalOrders: uniqueOrders.size || rows.length,
+            totalUnits,
+            avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
+            ordersWithTeams: withTeams,
+            machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
+            shiftDistribution: Object.entries(shifts).map(([name, value]) => ({ name, value })),
+            totalRows: rows.length,
+        };
+    } catch (e) {
+        console.error('Error extracting stats from CSV:', e);
+        return null;
+    }
 }
 
 export function reorderCSV(csvText) {
-    if (!csvText) return '';
-    const lines = csvText.trim().split('\n');
-    if (lines.length < 2) return csvText;
+    if (!csvText || typeof csvText !== 'string') return csvText || '';
 
-    const currentHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+    try {
+        const lines = csvText.trim().split('\n');
+        if (lines.length < 2) return csvText;
 
-    // Define desired column order
-    const desiredOrder = [
-        'code', 'order_code',
-        'item_number',
-        'description',
-        'colour', 'color',
-        'material',
-        'quantity', 'qty',
-        'machine',
-        'start_time',
-        'end_time',
-        'duration',
-        'shift',
-        'team'
-    ];
+        const currentHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
 
-    // Find indices for desired columns in the current CSV
-    const map = [];
-    const usedHeaders = new Set();
+        // Define desired column order
+        const desiredOrder = [
+            'code', 'order_code',
+            'item_number',
+            'description',
+            'colour', 'color',
+            'material',
+            'quantity', 'qty',
+            'machine',
+            'start_time',
+            'end_time',
+            'duration',
+            'shift',
+            'team'
+        ];
 
-    // First pass: find columns that match desired order
-    desiredOrder.forEach(key => {
-        const idx = currentHeaders.findIndex(h => h === key || h.includes(key));
-        if (idx !== -1 && !usedHeaders.has(currentHeaders[idx])) {
-            map.push({ index: idx, name: currentHeaders[idx] });
-            usedHeaders.add(currentHeaders[idx]);
-        }
-    });
+        // Find indices for desired columns in the current CSV
+        const map = [];
+        const usedHeaders = new Set();
 
-    // Second pass: add any remaining columns
-    currentHeaders.forEach((h, idx) => {
-        if (!usedHeaders.has(h)) {
-            map.push({ index: idx, name: h });
-        }
-    });
+        // First pass: find columns that match desired order
+        desiredOrder.forEach(key => {
+            const idx = currentHeaders.findIndex(h => h === key || h.includes(key));
+            if (idx !== -1 && !usedHeaders.has(currentHeaders[idx])) {
+                map.push({ index: idx, name: currentHeaders[idx] });
+                usedHeaders.add(currentHeaders[idx]);
+            }
+        });
 
-    // Reconstruct CSV
-    const newHeaders = map.map(m => m.name).join(',');
-    const newRows = lines.slice(1).map(line => {
-        const cols = line.split(',').map(c => c.trim());
-        return map.map(m => cols[m.index] || '').join(',');
-    });
+        // Second pass: add any remaining columns
+        currentHeaders.forEach((h, idx) => {
+            if (!usedHeaders.has(h)) {
+                map.push({ index: idx, name: h });
+            }
+        });
 
-    return [newHeaders, ...newRows].join('\n');
+        // If no columns matched at all, return original
+        if (map.length === 0) return csvText;
+
+        // Reconstruct CSV
+        const newHeaders = map.map(m => m.name).join(',');
+        const newRows = lines.slice(1).map(line => {
+            const cols = line.split(',').map(c => c.trim());
+            return map.map(m => cols[m.index] || '').join(',');
+        });
+
+        return [newHeaders, ...newRows].join('\n');
+    } catch (e) {
+        console.error('Error reordering CSV:', e);
+        return csvText || '';
+    }
 }
 
 // --- IndexedDB Utilities ---

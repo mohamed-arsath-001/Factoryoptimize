@@ -9,6 +9,7 @@ import {
     Users,
     Calendar,
     Hash,
+    Layers,
 } from 'lucide-react';
 import StatCard from '../components/ui/StatCard';
 import BarChartComponent from '../components/charts/BarChart';
@@ -17,15 +18,15 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { getStoredPlan } from '../services/api';
-import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromCSV, reorderCSV, parseBlobToCSV } from '../utils/helpers';
+import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
 
 export default function PlanDetails() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [plan, setPlan] = useState(null);
     const [stats, setStats] = useState(null);
-    const [tableRows, setTableRows] = useState([]);
-    const [tableHeaders, setTableHeaders] = useState([]);
+    const [sheets, setSheets] = useState([]); // Array of { name, headers, rows }
+    const [activeSheet, setActiveSheet] = useState(0);
     const [loading, setLoading] = useState(true);
     const [downloading, setDownloading] = useState(false);
 
@@ -39,7 +40,7 @@ export default function PlanDetails() {
             }
             setPlan(meta);
 
-            // Try to load stats from metadata first, or parse from blob
+            // Try to load stats from metadata first
             if (meta.stats) {
                 setStats(meta.stats);
             }
@@ -47,21 +48,38 @@ export default function PlanDetails() {
             try {
                 const blobs = await getPlanBlobs(id);
                 if (blobs?.optimizedBlob) {
-                    // Use parseBlobToCSV to handle both Excel and CSV blobs stored in IndexedDB
-                    // Even though we now save as CSV in CreateNewPlan, old plans might be different
-                    const text = await parseBlobToCSV(blobs.optimizedBlob);
-                    const parsed = extractStatsFromCSV(text);
-                    if (parsed) setStats(parsed);
+                    // Parse ALL sheets from the Excel blob for display
+                    const allSheets = await parseAllSheets(blobs.optimizedBlob);
 
-                    // Parse CSV for table display
-                    const lines = text.trim().split('\n');
-                    if (lines.length > 1) {
-                        const headers = lines[0].split(',').map((h) => h.trim());
-                        setTableHeaders(headers);
-                        const rows = lines.slice(1, 51).map((line) =>
-                            line.split(',').map((c) => c.trim())
-                        );
-                        setTableRows(rows);
+                    if (allSheets.length > 0) {
+                        // Build display data for each sheet
+                        const displaySheets = allSheets.map(sheet => {
+                            const lines = sheet.csv.trim().split('\n');
+                            let headers = [];
+                            let rows = [];
+
+                            if (lines.length > 1) {
+                                headers = lines[0].split(',').map(h => h.trim());
+                                rows = lines.slice(1, 51).map(line =>
+                                    line.split(',').map(c => c.trim())
+                                );
+                            }
+
+                            return {
+                                name: sheet.name,
+                                headers,
+                                rows,
+                                totalRows: lines.length - 1,
+                            };
+                        });
+
+                        setSheets(displaySheets);
+
+                        // Extract stats from the first sheet (production schedule)
+                        if (!meta.stats) {
+                            const parsed = extractStatsFromCSV(allSheets[0].csv);
+                            if (parsed) setStats(parsed);
+                        }
                     }
                 }
             } catch (err) {
@@ -78,12 +96,9 @@ export default function PlanDetails() {
         try {
             const blobs = await getPlanBlobs(id);
             if (blobs?.optimizedBlob) {
-                const text = await parseBlobToCSV(blobs.optimizedBlob);
-                const reorderedCSV = reorderCSV(text);
-                const newBlob = new Blob([reorderedCSV], { type: 'text/csv' });
-
-                const filename = plan?.optimizedFilename || 'optimized_schedule.csv';
-                downloadBlob(newBlob, filename);
+                // Download the ORIGINAL blob directly — preserves all sheets & formatting
+                const filename = plan?.optimizedFilename || 'optimized_schedule.xlsx';
+                downloadBlob(blobs.optimizedBlob, filename);
             }
         } catch (err) {
             console.error('Download error:', err);
@@ -105,12 +120,18 @@ export default function PlanDetails() {
         );
     }
 
+    // Determine download button label based on file extension
+    const isExcel = plan.optimizedFilename && /\.(xlsx|xls)$/i.test(plan.optimizedFilename);
+    const downloadLabel = isExcel ? 'Download Excel' : 'Download CSV';
+
     const statCards = [
         { title: 'Total Orders', value: stats?.totalOrders ?? '–', icon: ClipboardList, color: 'purple' },
         { title: 'Total Units', value: stats?.totalUnits?.toLocaleString() ?? '–', icon: Package, color: 'blue' },
         { title: 'Avg Batch Duration', value: stats?.avgBatchDuration ? `${Math.round(stats.avgBatchDuration)}m` : '–', icon: Timer, color: 'green' },
         { title: 'Orders With Teams', value: stats?.ordersWithTeams ?? '–', icon: Users, color: 'amber' },
     ];
+
+    const currentSheet = sheets[activeSheet];
 
     return (
         <div className="space-y-6">
@@ -134,12 +155,18 @@ export default function PlanDetails() {
                                 <Hash className="w-3 h-3" />
                                 {plan.id.slice(0, 8)}
                             </span>
+                            {sheets.length > 1 && (
+                                <span className="flex items-center gap-1.5 text-xs text-zinc-500">
+                                    <Layers className="w-3 h-3" />
+                                    {sheets.length} sheets
+                                </span>
+                            )}
                         </div>
                     </div>
                 </div>
                 <Button onClick={handleDownload} loading={downloading}>
                     <Download className="w-4 h-4" />
-                    Download CSV
+                    {downloadLabel}
                 </Button>
             </div>
 
@@ -156,41 +183,66 @@ export default function PlanDetails() {
                 <PieChartComponent data={stats?.shiftDistribution} title="Shift Distribution" />
             </div>
 
-            {/* Machine Table */}
-            {tableRows.length > 0 && (
+            {/* Sheet Tabs + Table */}
+            {sheets.length > 0 && (
                 <Card hover={false}>
+                    {/* Sheet Tabs */}
+                    {sheets.length > 1 && (
+                        <div className="flex items-center gap-1 mb-4 border-b border-dark-border pb-3">
+                            {sheets.map((sheet, idx) => (
+                                <button
+                                    key={idx}
+                                    onClick={() => setActiveSheet(idx)}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${activeSheet === idx
+                                            ? 'gradient-purple text-white shadow-md shadow-purple-500/20'
+                                            : 'text-zinc-400 hover:text-white hover:bg-dark-hover border border-transparent hover:border-dark-border'
+                                        }`}
+                                >
+                                    {sheet.name}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Table Header */}
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-sm font-semibold text-zinc-300">
-                            Machine Assignments
+                            {sheets.length > 1 ? currentSheet?.name : 'Machine Assignments'}
                             <span className="ml-2 text-xs text-zinc-600 font-normal">
-                                ({tableRows.length} rows{stats?.totalRows > 50 ? ` of ${stats.totalRows}` : ''})
+                                ({currentSheet?.rows.length ?? 0} rows{currentSheet?.totalRows > 50 ? ` of ${currentSheet.totalRows}` : ''})
                             </span>
                         </h3>
                     </div>
-                    <div className="overflow-x-auto rounded-lg border border-dark-border">
-                        <table className="w-full text-xs">
-                            <thead>
-                                <tr className="bg-dark-tertiary/50">
-                                    {tableHeaders.map((h) => (
-                                        <th key={h} className="px-3 py-2.5 text-left font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">
-                                            {h}
-                                        </th>
-                                    ))}
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-dark-border">
-                                {tableRows.map((row, ri) => (
-                                    <tr key={ri} className="hover:bg-dark-hover/50 transition-colors">
-                                        {row.map((cell, ci) => (
-                                            <td key={ci} className="px-3 py-2 text-zinc-300 whitespace-nowrap">
-                                                {cell || '–'}
-                                            </td>
+
+                    {/* Table */}
+                    {currentSheet && currentSheet.rows.length > 0 ? (
+                        <div className="overflow-x-auto rounded-lg border border-dark-border">
+                            <table className="w-full text-xs">
+                                <thead>
+                                    <tr className="bg-dark-tertiary/50">
+                                        {currentSheet.headers.map((h, hi) => (
+                                            <th key={hi} className="px-3 py-2.5 text-left font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                                                {h}
+                                            </th>
                                         ))}
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
+                                </thead>
+                                <tbody className="divide-y divide-dark-border">
+                                    {currentSheet.rows.map((row, ri) => (
+                                        <tr key={ri} className="hover:bg-dark-hover/50 transition-colors">
+                                            {row.map((cell, ci) => (
+                                                <td key={ci} className="px-3 py-2 text-zinc-300 whitespace-nowrap">
+                                                    {cell || '–'}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <p className="text-xs text-zinc-600 text-center py-4">No data in this sheet</p>
+                    )}
                 </Card>
             )}
         </div>
