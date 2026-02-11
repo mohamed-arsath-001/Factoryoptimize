@@ -1,0 +1,241 @@
+
+import { read, utils } from 'xlsx';
+
+export function formatDate(date) {
+    return new Date(date).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+    });
+}
+
+export function groupPlansByMonth(plans) {
+    const grouped = {};
+    plans.forEach((plan) => {
+        const date = new Date(plan.uploadDate);
+        const key = `${date.toLocaleString('en-US', { month: 'long' })} ${date.getFullYear()}`;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(plan);
+    });
+    return grouped;
+}
+
+export function downloadBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+export async function parseBlobToCSV(blob) {
+    if (!blob) return '';
+
+    // Check for Excel signature (PK..) or type
+    const isExcel = blob.type.includes('spreadsheet') || blob.type.includes('excel') || blob.type.includes('openxml');
+
+    // Fallback: Read first few bytes for signature if type is generic
+    if (!isExcel) {
+        const header = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+        // PK.. signature for zip/xlsx
+        if (header[0] === 0x50 && header[1] === 0x4B && header[2] === 0x03 && header[3] === 0x04) {
+            return parseExcelToCSV(blob);
+        }
+    }
+
+    if (isExcel) {
+        return parseExcelToCSV(blob);
+    }
+
+    // Default: treat as text/CSV
+    return await blob.text();
+}
+
+async function parseExcelToCSV(blob) {
+    const data = await blob.arrayBuffer();
+    const workbook = read(data);
+    const firstSheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[firstSheetName];
+    return utils.sheet_to_csv(worksheet);
+}
+
+export function validateFile(file) {
+    if (!file) return { valid: false, error: 'No file selected' };
+    const validExtensions = ['.csv', '.xlsx', '.xls'];
+    const lowerName = file.name.toLowerCase();
+    if (!validExtensions.some(ext => lowerName.endsWith(ext))) {
+        return { valid: false, error: 'Only CSV and Excel files are accepted' };
+    }
+    if (file.size > 10 * 1024 * 1024) return { valid: false, error: 'File size must be less than 10MB' };
+    return { valid: true, error: null };
+}
+
+export function formatDuration(seconds) {
+    if (!seconds && seconds !== 0) return '–';
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (h > 0) return `${h}h ${m}m`;
+    return `${m}m`;
+}
+
+export function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
+export function extractStatsFromCSV(csvText) {
+    if (!csvText) return null;
+    const lines = csvText.trim().split('\n');
+    if (lines.length < 2) return null;
+
+    const headers = lines[0].split(',').map((h) => h.trim().toLowerCase());
+    const rows = lines.slice(1).filter((l) => l.trim());
+
+    const codeIdx = headers.findIndex((h) => h === 'code' || h === 'order_code');
+    const qtyIdx = headers.findIndex((h) => h === 'quantity' || h === 'qty');
+    const machineIdx = headers.findIndex((h) => h.includes('machine'));
+    const durationIdx = headers.findIndex((h) => h.includes('duration') || h.includes('time'));
+    const shiftIdx = headers.findIndex((h) => h.includes('shift'));
+    const teamIdx = headers.findIndex((h) => h.includes('team'));
+
+    const uniqueOrders = new Set();
+    let totalUnits = 0;
+    let totalDuration = 0;
+    let withTeams = 0;
+    const machines = {};
+    const shifts = {};
+
+    rows.forEach((row) => {
+        const cols = row.split(',').map((c) => c.trim());
+        if (codeIdx >= 0) uniqueOrders.add(cols[codeIdx]);
+        if (qtyIdx >= 0) totalUnits += parseInt(cols[qtyIdx]) || 0;
+        if (durationIdx >= 0) totalDuration += parseFloat(cols[durationIdx]) || 0;
+        if (teamIdx >= 0 && cols[teamIdx]) withTeams++;
+        if (machineIdx >= 0 && cols[machineIdx]) {
+            const m = cols[machineIdx];
+            machines[m] = (machines[m] || 0) + 1;
+        }
+        if (shiftIdx >= 0 && cols[shiftIdx]) {
+            const s = cols[shiftIdx];
+            shifts[s] = (shifts[s] || 0) + 1;
+        }
+    });
+
+    return {
+        totalOrders: uniqueOrders.size || rows.length,
+        totalUnits,
+        avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
+        ordersWithTeams: withTeams,
+        machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
+        shiftDistribution: Object.entries(shifts).map(([name, value]) => ({ name, value })),
+        totalRows: rows.length,
+    };
+}
+
+export function reorderCSV(csvText) {
+    if (!csvText) return '';
+    const lines = csvText.trim().split('\n');
+    if (lines.length < 2) return csvText;
+
+    const currentHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+
+    // Define desired column order
+    const desiredOrder = [
+        'code', 'order_code',
+        'item_number',
+        'description',
+        'colour', 'color',
+        'material',
+        'quantity', 'qty',
+        'machine',
+        'start_time',
+        'end_time',
+        'duration',
+        'shift',
+        'team'
+    ];
+
+    // Find indices for desired columns in the current CSV
+    const map = [];
+    const usedHeaders = new Set();
+
+    // First pass: find columns that match desired order
+    desiredOrder.forEach(key => {
+        const idx = currentHeaders.findIndex(h => h === key || h.includes(key));
+        if (idx !== -1 && !usedHeaders.has(currentHeaders[idx])) {
+            map.push({ index: idx, name: currentHeaders[idx] });
+            usedHeaders.add(currentHeaders[idx]);
+        }
+    });
+
+    // Second pass: add any remaining columns
+    currentHeaders.forEach((h, idx) => {
+        if (!usedHeaders.has(h)) {
+            map.push({ index: idx, name: h });
+        }
+    });
+
+    // Reconstruct CSV
+    const newHeaders = map.map(m => m.name).join(',');
+    const newRows = lines.slice(1).map(line => {
+        const cols = line.split(',').map(c => c.trim());
+        return map.map(m => cols[m.index] || '').join(',');
+    });
+
+    return [newHeaders, ...newRows].join('\n');
+}
+
+// --- IndexedDB Utilities ---
+const DB_NAME = 'FactoryFlowDB';
+const DB_VERSION = 1;
+const STORE_NAME = 'planBlobs';
+
+function openDB() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+export async function savePlanBlobs(planId, originalBlob, optimizedBlob) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put({ id: planId, originalBlob, optimizedBlob });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+export async function getPlanBlobs(planId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const request = tx.objectStore(STORE_NAME).get(planId);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+export async function deletePlanBlobs(planId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(planId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
