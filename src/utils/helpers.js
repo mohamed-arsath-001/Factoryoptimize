@@ -204,13 +204,25 @@ export function extractStatsFromCSV(csvText) {
             }
         });
 
+        // Group shifts into canonical categories: Night, Morning, Afternoon, Evening
+        const SHIFT_CATEGORIES = ['night', 'morning', 'afternoon', 'evening'];
+        const groupedShifts = {};
+        Object.entries(shifts).forEach(([name, count]) => {
+            const lower = name.toLowerCase().trim();
+            const match = SHIFT_CATEGORIES.find(cat => lower.includes(cat));
+            if (match) {
+                const label = match.charAt(0).toUpperCase() + match.slice(1);
+                groupedShifts[label] = (groupedShifts[label] || 0) + count;
+            }
+        });
+
         return {
             totalOrders: uniqueOrders.size || rows.length,
             totalUnits,
             avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
             ordersWithTeams: withTeams,
             machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
-            shiftDistribution: Object.entries(shifts).map(([name, value]) => ({ name, value })),
+            shiftDistribution: Object.entries(groupedShifts).map(([name, value]) => ({ name, value })),
             totalRows: rows.length,
         };
     } catch (e) {

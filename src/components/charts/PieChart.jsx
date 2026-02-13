@@ -41,10 +41,10 @@ function renderLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
 
 export default function PieChartComponent({ data = [], title = 'Shift Distribution' }) {
     const chartData = data.length > 0 ? data : [
-        { name: 'Morning', value: 35 },
-        { name: 'Afternoon', value: 30 },
-        { name: 'Night', value: 20 },
-        { name: 'Overtime', value: 15 },
+        { name: 'Night', value: 25 },
+        { name: 'Morning', value: 30 },
+        { name: 'Afternoon', value: 25 },
+        { name: 'Evening', value: 20 },
     ];
 
     return (
