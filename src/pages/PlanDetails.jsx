@@ -18,7 +18,7 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { getStoredPlan } from '../services/api';
-import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
+import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromJSON, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
 
 // Define the exact columns and order for the schedule table
 const SCHEDULE_COLUMNS = [
@@ -31,19 +31,13 @@ const SCHEDULE_COLUMNS = [
     { key: 'Assigned_Team', label: 'Assigned Team', highlight: true },
 ];
 
-// Check if cached stats have stale/numeric shift entries that need re-parsing
-function hasStaleShiftStats(stats) {
-    if (!stats?.shiftDistribution) return true;
-    // If distribution has numeric-only names, it's stale
-    return stats.shiftDistribution.some(entry => /^\d+$/.test(entry.name));
-}
 
 export default function PlanDetails() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [plan, setPlan] = useState(null);
     const [stats, setStats] = useState(null);
-    const [sheets, setSheets] = useState([]); // Array of { name, headers, rows, rawHeaders }
+    const [sheets, setSheets] = useState([]); // Array of { name, headers, rows, rawHeaders, jsonRows }
     const [activeSheet, setActiveSheet] = useState(0);
     const [loading, setLoading] = useState(true);
     const [downloading, setDownloading] = useState(false);
@@ -58,8 +52,8 @@ export default function PlanDetails() {
             }
             setPlan(meta);
 
-            // Try to load stats from metadata first (skip if stale shift data)
-            if (meta.stats && !hasStaleShiftStats(meta.stats)) {
+            // Try to load stats from metadata first
+            if (meta.stats) {
                 setStats(meta.stats);
             }
 
@@ -72,19 +66,32 @@ export default function PlanDetails() {
                     if (allSheets.length > 0) {
                         // Build display data for each sheet
                         const displaySheets = allSheets.map(sheet => {
-                            const lines = sheet.csv.trim().split('\n');
+                            const jsonRows = sheet.json;
                             let headers = [];
                             let rawHeaders = [];
                             let rows = [];
+                            let totalRows = 0;
 
-                            if (lines.length > 1) {
-                                rawHeaders = lines[0].split(',').map(h => h.trim());
+                            if (jsonRows && jsonRows.length > 0) {
+                                // Use JSON objects — no CSV misalignment
+                                rawHeaders = Object.keys(jsonRows[0]);
                                 headers = rawHeaders;
-
-                                const dataRows = lines.slice(1).filter(l => l.trim());
-                                rows = dataRows.slice(0, 100).map(line =>
-                                    line.split(',').map(c => c.trim())
+                                totalRows = jsonRows.length;
+                                rows = jsonRows.slice(0, 100).map(obj =>
+                                    rawHeaders.map(h => String(obj[h] ?? ''))
                                 );
+                            } else {
+                                // Fallback to CSV parsing
+                                const lines = sheet.csv.trim().split('\n');
+                                if (lines.length > 1) {
+                                    rawHeaders = lines[0].split(',').map(h => h.trim());
+                                    headers = rawHeaders;
+                                    const dataRows = lines.slice(1).filter(l => l.trim());
+                                    totalRows = dataRows.length;
+                                    rows = dataRows.slice(0, 100).map(line =>
+                                        line.split(',').map(c => c.trim())
+                                    );
+                                }
                             }
 
                             return {
@@ -92,7 +99,8 @@ export default function PlanDetails() {
                                 headers,
                                 rawHeaders,
                                 rows,
-                                totalRows: lines.length - 1,
+                                jsonRows,
+                                totalRows,
                             };
                         });
 
@@ -100,7 +108,10 @@ export default function PlanDetails() {
 
                         // Extract stats from the first sheet (production schedule)
                         if (!meta.stats) {
-                            const parsed = extractStatsFromCSV(allSheets[0].csv);
+                            const firstSheet = allSheets[0];
+                            const parsed = firstSheet.json
+                                ? extractStatsFromJSON(firstSheet.json)
+                                : extractStatsFromCSV(firstSheet.csv);
                             if (parsed) setStats(parsed);
                         }
                     }
@@ -171,19 +182,11 @@ export default function PlanDetails() {
                 return { ...col, idx };
             }).filter(col => col.idx !== -1);
 
-            // Find the Shift column index in ordered columns
-            const shiftOrderedIdx = columnMap.findIndex(c => c.key.toLowerCase() === 'shift');
-
             return {
                 headers: columnMap.map(c => c.label),
                 highlightIndices: columnMap.map((c, i) => c.highlight ? i : -1).filter(i => i !== -1),
                 rows: sheet.rows.map(row =>
-                    columnMap.map((c, ci) => {
-                        const val = row[c.idx] || '–';
-                        // Replace numeric-only Shift values with dash
-                        if (ci === shiftOrderedIdx && /^\d+$/.test(val)) return '–';
-                        return val;
-                    })
+                    columnMap.map(c => row[c.idx] || '–')
                 ),
             };
         }

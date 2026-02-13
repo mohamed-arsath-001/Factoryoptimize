@@ -95,18 +95,19 @@ export async function parseAllSheets(blob) {
             return workbook.SheetNames.map(sheetName => ({
                 name: sheetName,
                 csv: utils.sheet_to_csv(workbook.Sheets[sheetName]),
+                json: utils.sheet_to_json(workbook.Sheets[sheetName], { defval: '' }),
             }));
         }
 
         // Plain text/CSV — return as a single "sheet"
         const text = await blob.text();
-        return [{ name: 'Sheet 1', csv: text }];
+        return [{ name: 'Sheet 1', csv: text, json: null }];
     } catch (e) {
         console.error('Error in parseAllSheets:', e);
         // Fallback: try reading as plain text
         try {
             const text = await blob.text();
-            return [{ name: 'Sheet 1', csv: text }];
+            return [{ name: 'Sheet 1', csv: text, json: null }];
         } catch (e2) {
             return [];
         }
@@ -155,6 +156,87 @@ export function generateUUID() {
         const v = c === 'x' ? r : (r & 0x3) | 0x8;
         return v.toString(16);
     });
+}
+
+/**
+ * Find a key in an object by partial match (case-insensitive).
+ */
+function findKey(obj, ...candidates) {
+    const keys = Object.keys(obj);
+    for (const cand of candidates) {
+        const found = keys.find(k => k.toLowerCase() === cand);
+        if (found) return found;
+    }
+    for (const cand of candidates) {
+        const found = keys.find(k => k.toLowerCase().includes(cand));
+        if (found) return found;
+    }
+    return null;
+}
+
+/**
+ * Extract stats from JSON objects (from sheet_to_json).
+ * This avoids CSV column misalignment issues.
+ */
+export function extractStatsFromJSON(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+
+    try {
+        const sample = rows[0];
+        const codeKey = findKey(sample, 'code', 'order_code', 'order_id');
+        const qtyKey = findKey(sample, 'quantity', 'qty');
+        const machineKey = findKey(sample, 'machine');
+        const durationKey = findKey(sample, 'duration_mins', 'duration', 'time');
+        const shiftKey = findKey(sample, 'shift');
+        const teamKey = findKey(sample, 'assigned_team', 'team');
+
+        const uniqueOrders = new Set();
+        let totalUnits = 0;
+        let totalDuration = 0;
+        let withTeams = 0;
+        const machines = {};
+        const shifts = {};
+
+        rows.forEach(row => {
+            if (codeKey && row[codeKey]) uniqueOrders.add(String(row[codeKey]));
+            if (qtyKey) totalUnits += parseInt(row[qtyKey]) || 0;
+            if (durationKey) totalDuration += parseFloat(row[durationKey]) || 0;
+            if (teamKey && row[teamKey]) withTeams++;
+            if (machineKey && row[machineKey]) {
+                const m = String(row[machineKey]);
+                machines[m] = (machines[m] || 0) + 1;
+            }
+            if (shiftKey && row[shiftKey]) {
+                const s = String(row[shiftKey]);
+                shifts[s] = (shifts[s] || 0) + 1;
+            }
+        });
+
+        // Group shifts into canonical categories: Night, Morning, Afternoon, Evening
+        const SHIFT_CATEGORIES = ['night', 'morning', 'afternoon', 'evening'];
+        const groupedShifts = {};
+        Object.entries(shifts).forEach(([name, count]) => {
+            const lower = name.toLowerCase().trim();
+            const match = SHIFT_CATEGORIES.find(cat => lower.includes(cat));
+            if (match) {
+                const label = match.charAt(0).toUpperCase() + match.slice(1);
+                groupedShifts[label] = (groupedShifts[label] || 0) + count;
+            }
+        });
+
+        return {
+            totalOrders: uniqueOrders.size || rows.length,
+            totalUnits,
+            avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
+            ordersWithTeams: withTeams,
+            machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
+            shiftDistribution: Object.entries(groupedShifts).map(([name, value]) => ({ name, value })),
+            totalRows: rows.length,
+        };
+    } catch (e) {
+        console.error('Error extracting stats from JSON:', e);
+        return null;
+    }
 }
 
 export function extractStatsFromCSV(csvText) {
