@@ -1,4 +1,4 @@
-const WEBHOOK_URL = 'https://arsath26.app.n8n.cloud/webhook/toweb';
+const RENDER_URL = 'https://wood-production-scheduler-api.onrender.com/optimize';
 
 /**
  * Convert an array of objects to a CSV string.
@@ -20,15 +20,24 @@ function arrayToCSV(arr) {
     return [headers.join(','), ...rows].join('\n');
 }
 
-export async function uploadAndOptimize(file) {
+/**
+ * Upload multiple files to the Render backend for optimization.
+ * @param {File[]} files - Array of files to upload
+ * @returns {{ blob: Blob, filename: string, n8nDelivery: string | null }}
+ */
+export async function uploadAndOptimize(files) {
     const formData = new FormData();
-    formData.append('file', file);
+
+    // Loop through all files — key must be 'files' (plural)
+    for (let i = 0; i < files.length; i++) {
+        formData.append('files', files[i]);
+    }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
+    const timeout = setTimeout(() => controller.abort(), 180000); // 3 min timeout for multiple files
 
     try {
-        const response = await fetch(WEBHOOK_URL, {
+        const response = await fetch(RENDER_URL, {
             method: 'POST',
             body: formData,
             signal: controller.signal,
@@ -41,19 +50,8 @@ export async function uploadAndOptimize(file) {
         }
 
         const contentType = response.headers.get('Content-Type') || '';
-        let blob;
-        let filename = 'optimized_schedule.csv';
 
-        // Extract filename from Content-Disposition if available
-        const disposition = response.headers.get('Content-Disposition');
-        if (disposition) {
-            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-            if (match) filename = match[1].replace(/['"]/g, '');
-        }
-
-        // ─── FIX: Detect binary Excel responses BEFORE reading the body ───
-        // Reading binary data with response.text() corrupts it (UTF-8 decoding).
-        // We must use response.blob() or response.arrayBuffer() for binary content.
+        // ─── Check for binary Excel response ───
         const isBinaryType =
             contentType.includes('spreadsheet') ||
             contentType.includes('excel') ||
@@ -61,75 +59,78 @@ export async function uploadAndOptimize(file) {
             contentType.includes('octet-stream');
 
         if (isBinaryType) {
-            // Preserve binary data by reading as blob directly
-            blob = await response.blob();
-            if (!filename.match(/\.(xlsx|xls)$/i)) {
-                filename = 'optimized_schedule.xlsx';
+            const blob = await response.blob();
+            let filename = 'optimized_schedule.xlsx';
+            const disposition = response.headers.get('Content-Disposition');
+            if (disposition) {
+                const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+                if (match) filename = match[1].replace(/['"]/g, '');
             }
-            return { blob, filename };
+            return { blob, filename, n8nDelivery: null };
         }
 
-        // ─── For text-based responses (JSON, CSV, plain text) ───
+        // ─── JSON response (expected from Render backend) ───
         const text = await response.text();
 
         if (!text || !text.trim()) {
-            // Empty response — return a placeholder
-            console.warn('Received empty response from webhook');
-            blob = new Blob(
+            console.warn('Received empty response from backend');
+            const blob = new Blob(
                 ['code,item_number,description,colour,material,quantity\nNO_DATA,0,No data returned,,,'],
                 { type: 'text/csv' }
             );
-        } else if (contentType.includes('application/json')) {
-            try {
-                const json = JSON.parse(text);
-
-                if (typeof json === 'string') {
-                    // Whole JSON is a CSV string
-                    blob = new Blob([json], { type: 'text/csv' });
-                } else if (json.csv && typeof json.csv === 'string') {
-                    blob = new Blob([json.csv], { type: 'text/csv' });
-                } else if (json.data && typeof json.data === 'string') {
-                    blob = new Blob([json.data], { type: 'text/csv' });
-                } else if (json.output && typeof json.output === 'string') {
-                    blob = new Blob([json.output], { type: 'text/csv' });
-                } else if (json.result && typeof json.result === 'string') {
-                    blob = new Blob([json.result], { type: 'text/csv' });
-                } else if (Array.isArray(json)) {
-                    // ─── FIX: Array of objects → convert to proper CSV ───
-                    const csvContent = arrayToCSV(json);
-                    blob = new Blob([csvContent], { type: 'text/csv' });
-                } else if (json.data && Array.isArray(json.data)) {
-                    const csvContent = arrayToCSV(json.data);
-                    blob = new Blob([csvContent], { type: 'text/csv' });
-                } else if (json.output && Array.isArray(json.output)) {
-                    const csvContent = arrayToCSV(json.output);
-                    blob = new Blob([csvContent], { type: 'text/csv' });
-                } else if (json.result && Array.isArray(json.result)) {
-                    const csvContent = arrayToCSV(json.result);
-                    blob = new Blob([csvContent], { type: 'text/csv' });
-                } else {
-                    // Last resort: check if any top-level key holds an array
-                    console.warn('Unexpected JSON structure from webhook:', Object.keys(json));
-                    const arrayKey = Object.keys(json).find(k => Array.isArray(json[k]));
-                    if (arrayKey) {
-                        const csvContent = arrayToCSV(json[arrayKey]);
-                        blob = new Blob([csvContent], { type: 'text/csv' });
-                    } else {
-                        // Truly unrecognized — stringify as fallback
-                        blob = new Blob([JSON.stringify(json, null, 2)], { type: 'text/plain' });
-                    }
-                }
-            } catch (e) {
-                // JSON parse failed — treat the raw text as CSV
-                console.warn('Failed to parse JSON response, treating as CSV:', e);
-                blob = new Blob([text], { type: 'text/csv' });
-            }
-        } else {
-            // text/csv, text/plain, or any other text content type
-            blob = new Blob([text], { type: contentType || 'text/csv' });
+            return { blob, filename: 'optimized_schedule.csv', n8nDelivery: null };
         }
 
-        return { blob, filename };
+        // Parse as JSON
+        let json;
+        try {
+            json = JSON.parse(text);
+        } catch (e) {
+            // Not JSON — treat as raw CSV
+            console.warn('Response is not JSON, treating as CSV');
+            const blob = new Blob([text], { type: 'text/csv' });
+            return { blob, filename: 'optimized_schedule.csv', n8nDelivery: null };
+        }
+
+        // Extract n8n delivery status
+        const n8nDelivery = json.n8n_delivery || null;
+
+        // Extract schedule data from response.data
+        let blob;
+        let filename = 'optimized_schedule.csv';
+        const data = json.data;
+
+        if (Array.isArray(data)) {
+            // Array of objects → convert to CSV blob
+            const csvContent = arrayToCSV(data);
+            blob = new Blob([csvContent], { type: 'text/csv' });
+        } else if (typeof data === 'string') {
+            // CSV string
+            blob = new Blob([data], { type: 'text/csv' });
+        } else if (data && typeof data === 'object') {
+            // Could be a nested structure — try to find an array
+            const arrayKey = Object.keys(data).find(k => Array.isArray(data[k]));
+            if (arrayKey) {
+                const csvContent = arrayToCSV(data[arrayKey]);
+                blob = new Blob([csvContent], { type: 'text/csv' });
+            } else {
+                blob = new Blob([JSON.stringify(data, null, 2)], { type: 'text/plain' });
+                filename = 'optimized_schedule.json';
+            }
+        } else {
+            // Fallback: use the entire json
+            console.warn('Unexpected response structure:', Object.keys(json));
+            const arrayKey = Object.keys(json).find(k => Array.isArray(json[k]));
+            if (arrayKey) {
+                const csvContent = arrayToCSV(json[arrayKey]);
+                blob = new Blob([csvContent], { type: 'text/csv' });
+            } else {
+                blob = new Blob([JSON.stringify(json, null, 2)], { type: 'text/plain' });
+                filename = 'optimized_schedule.json';
+            }
+        }
+
+        return { blob, filename, n8nDelivery };
     } catch (error) {
         clearTimeout(timeout);
         if (error.name === 'AbortError') {

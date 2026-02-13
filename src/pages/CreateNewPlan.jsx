@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
+import { Upload, Sparkles, CheckCircle, AlertCircle, Mail } from 'lucide-react';
 import FileUpload from '../components/ui/FileUpload';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -14,24 +14,27 @@ const REQUIRED_COLUMNS = ['code', 'item_number', 'description', 'colour', 'mater
 export default function CreateNewPlan() {
     const navigate = useNavigate();
     const { addPlan } = usePlans();
-    const [file, setFile] = useState(null);
+    const [files, setFiles] = useState([]);
     const [step, setStep] = useState(1); // 1=upload, 2=optimizing, 3=done
     const [error, setError] = useState(null);
     const [optimizing, setOptimizing] = useState(false);
+    const [emailSent, setEmailSent] = useState(false);
 
     async function handleOptimize() {
-        if (!file) return;
+        if (files.length === 0) return;
         setStep(2);
         setOptimizing(true);
         setError(null);
+        setEmailSent(false);
 
         try {
-            // Step 1: Upload file and get optimized response from backend
-            let blob, filename;
+            // Step 1: Upload files and get optimized response from Render backend
+            let blob, filename, n8nDelivery;
             try {
-                const result = await uploadAndOptimize(file);
+                const result = await uploadAndOptimize(files);
                 blob = result.blob;
                 filename = result.filename;
+                n8nDelivery = result.n8nDelivery;
             } catch (apiErr) {
                 throw new Error(`Backend request failed: ${apiErr.message || 'Unknown network error'}`);
             }
@@ -40,8 +43,12 @@ export default function CreateNewPlan() {
                 throw new Error('No data received from the optimization server.');
             }
 
+            // Check email delivery status
+            if (n8nDelivery === 'Email Sent Successfully') {
+                setEmailSent(true);
+            }
+
             // Step 2: Parse the first sheet for stats display only
-            // The original blob (with ALL sheets) is preserved for download.
             let stats = null;
             try {
                 const csvText = await parseBlobToCSV(blob);
@@ -52,20 +59,24 @@ export default function CreateNewPlan() {
                 console.warn('Stats extraction failed (non-critical):', statsErr);
             }
 
-            // Step 3: Save the ORIGINAL blob to IndexedDB (preserves all 3 Excel sheets)
-            // Do NOT convert to CSV — that destroys the multi-sheet structure.
+            // Step 3: Save blob to IndexedDB
             const planId = generateUUID();
+            const planName = files.length === 1
+                ? files[0].name.replace(/\.[^/.]+$/, '') + ' — Optimized'
+                : `${files.length} Files — Optimized`;
+
             const plan = {
                 id: planId,
-                name: file.name.replace(/\.[^/.]+$/, '') + ' — Optimized',
+                name: planName,
                 uploadDate: new Date().toISOString(),
-                originalFilename: file.name,
-                optimizedFilename: filename, // Keep original extension (.xlsx)
+                originalFilename: files.map(f => f.name).join(', '),
+                optimizedFilename: filename,
                 stats,
             };
 
             try {
-                await savePlanBlobs(planId, file, blob);
+                // Save the first file as the "original" and the optimized blob
+                await savePlanBlobs(planId, files[0], blob);
             } catch (dbErr) {
                 console.error('IndexedDB save failed:', dbErr);
                 throw new Error('Failed to save plan data locally. Please ensure browser storage is available.');
@@ -74,7 +85,7 @@ export default function CreateNewPlan() {
             addPlan(plan);
 
             setStep(3);
-            setTimeout(() => navigate(`/plans/${planId}`), 1200);
+            setTimeout(() => navigate(`/plans/${planId}`), 1800);
         } catch (err) {
             console.error('Plan generation error:', err);
             setError(err.message || 'Optimization failed. Please try again.');
@@ -90,7 +101,7 @@ export default function CreateNewPlan() {
             <div>
                 <h1 className="text-2xl font-bold text-white">Create New Plan</h1>
                 <p className="text-sm text-zinc-500 mt-1">
-                    Upload your orders file and generate an optimized production schedule
+                    Upload your orders files and generate an optimized production schedule
                 </p>
             </div>
 
@@ -122,13 +133,13 @@ export default function CreateNewPlan() {
                 <Card hover={false} className="space-y-5 animate-slide-in">
                     <div className="flex items-center gap-2">
                         <Upload className="w-4 h-4 text-purple-400" />
-                        <h2 className="text-sm font-semibold text-zinc-300">Upload Orders File</h2>
+                        <h2 className="text-sm font-semibold text-zinc-300">Upload Orders Files</h2>
                     </div>
 
                     <FileUpload
-                        selectedFile={file}
-                        onFileSelect={(f) => { setFile(f); setError(null); }}
-                        onClear={() => setFile(null)}
+                        selectedFiles={files}
+                        onFilesSelect={(f) => { setFiles(f); setError(null); }}
+                        onClear={() => setFiles([])}
                     />
 
                     <div className="bg-dark-primary/50 rounded-lg p-3 border border-dark-border">
@@ -162,7 +173,7 @@ export default function CreateNewPlan() {
 
                     <Button
                         onClick={handleOptimize}
-                        disabled={!file}
+                        disabled={files.length === 0}
                         className="w-full"
                     >
                         <Sparkles className="w-4 h-4" />
@@ -183,7 +194,7 @@ export default function CreateNewPlan() {
                         <div className="text-center">
                             <p className="text-sm font-semibold text-white">Optimizing Production Schedule</p>
                             <p className="text-xs text-zinc-500 mt-1">
-                                This may take a moment. Processing your orders...
+                                Processing {files.length} file{files.length > 1 ? 's' : ''}... This may take a moment.
                             </p>
                         </div>
                         <LoadingSpinner size="sm" text="" />
@@ -193,17 +204,32 @@ export default function CreateNewPlan() {
 
             {/* Step 3: Done */}
             {step === 3 && (
-                <Card hover={false} className="animate-slide-in">
-                    <div className="py-8 flex flex-col items-center gap-3">
-                        <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center">
-                            <CheckCircle className="w-7 h-7 text-green-400" />
+                <div className="space-y-4 animate-slide-in">
+                    <Card hover={false}>
+                        <div className="py-8 flex flex-col items-center gap-3">
+                            <div className="w-14 h-14 rounded-full bg-green-500/15 flex items-center justify-center">
+                                <CheckCircle className="w-7 h-7 text-green-400" />
+                            </div>
+                            <div className="text-center">
+                                <p className="text-sm font-semibold text-white">Optimization Complete!</p>
+                                <p className="text-xs text-zinc-500 mt-1">Redirecting to plan details...</p>
+                            </div>
                         </div>
-                        <div className="text-center">
-                            <p className="text-sm font-semibold text-white">Optimization Complete!</p>
-                            <p className="text-xs text-zinc-500 mt-1">Redirecting to plan details...</p>
+                    </Card>
+
+                    {/* Email success toast */}
+                    {emailSent && (
+                        <div className="flex items-center gap-3 p-4 rounded-xl bg-green-500/10 border border-green-500/20 animate-slide-in">
+                            <div className="w-9 h-9 rounded-lg bg-green-500/15 flex items-center justify-center shrink-0">
+                                <Mail className="w-4.5 h-4.5 text-green-400" />
+                            </div>
+                            <div>
+                                <p className="text-sm font-medium text-green-300">Email Sent Successfully</p>
+                                <p className="text-xs text-green-400/70">The optimized schedule has been delivered to your inbox.</p>
+                            </div>
                         </div>
-                    </div>
-                </Card>
+                    )}
+                </div>
             )}
         </div>
     );

@@ -1,40 +1,63 @@
 import { useRef, useState } from 'react';
-import { Upload, FileText, X } from 'lucide-react';
+import { Upload, FileText, X, Files } from 'lucide-react';
 import { validateFile } from '../../utils/helpers';
 
-export default function FileUpload({ onFileSelect, selectedFile, onClear }) {
+export default function FileUpload({ onFilesSelect, selectedFiles = [], onClear }) {
     const inputRef = useRef(null);
     const [dragOver, setDragOver] = useState(false);
     const [error, setError] = useState(null);
 
-    function handleFile(file) {
-        const result = validateFile(file);
-        if (!result.valid) {
-            setError(result.error);
+    function handleFiles(fileList) {
+        const filesArray = Array.from(fileList);
+        if (filesArray.length === 0) return;
+
+        const errors = [];
+        const validFiles = [];
+
+        filesArray.forEach((file) => {
+            const result = validateFile(file);
+            if (!result.valid) {
+                errors.push(`${file.name}: ${result.error}`);
+            } else {
+                validFiles.push(file);
+            }
+        });
+
+        if (errors.length > 0 && validFiles.length === 0) {
+            setError(errors.join('; '));
             return;
         }
-        setError(null);
-        onFileSelect(file);
+
+        if (errors.length > 0) {
+            setError(`Some files skipped: ${errors.join('; ')}`);
+        } else {
+            setError(null);
+        }
+
+        onFilesSelect(validFiles);
     }
 
     function handleDrop(e) {
         e.preventDefault();
         setDragOver(false);
-        const file = e.dataTransfer.files[0];
-        if (file) handleFile(file);
+        handleFiles(e.dataTransfer.files);
     }
 
     function handleChange(e) {
-        const file = e.target.files[0];
-        if (file) handleFile(file);
+        handleFiles(e.target.files);
+        // Reset input value so re-selecting the same files triggers onChange
+        e.target.value = '';
     }
+
+    const hasFiles = selectedFiles.length > 0;
+    const totalSize = selectedFiles.reduce((sum, f) => sum + f.size, 0);
 
     return (
         <div className="space-y-2">
             <div
                 className={`relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer transition-all duration-300 ${dragOver
                     ? 'border-purple-500 bg-purple-500/10'
-                    : selectedFile
+                    : hasFiles
                         ? 'border-green-500/40 bg-green-500/5'
                         : 'border-dark-border hover:border-purple-500/40 hover:bg-dark-hover/50'
                     }`}
@@ -47,17 +70,20 @@ export default function FileUpload({ onFileSelect, selectedFile, onClear }) {
                     ref={inputRef}
                     type="file"
                     accept=".csv,.xlsx,.xls"
+                    multiple
                     onChange={handleChange}
                     className="hidden"
                 />
 
-                {selectedFile ? (
+                {hasFiles ? (
                     <div className="flex items-center justify-center gap-3">
-                        <FileText className="w-8 h-8 text-green-400" />
-                        <div className="text-left">
-                            <p className="text-sm font-medium text-white">{selectedFile.name}</p>
+                        <Files className="w-8 h-8 text-green-400 shrink-0" />
+                        <div className="text-left min-w-0">
+                            <p className="text-sm font-medium text-white">
+                                {selectedFiles.length} file{selectedFiles.length > 1 ? 's' : ''} selected
+                            </p>
                             <p className="text-xs text-zinc-500">
-                                {(selectedFile.size / 1024).toFixed(1)} KB
+                                {(totalSize / 1024).toFixed(1)} KB total
                             </p>
                         </div>
                         <button
@@ -78,13 +104,29 @@ export default function FileUpload({ onFileSelect, selectedFile, onClear }) {
                         </div>
                         <div>
                             <p className="text-sm font-medium text-zinc-300">
-                                Drag & drop your file here
+                                Drag & drop your files here
                             </p>
-                            <p className="text-xs text-zinc-500 mt-1">or click to browse</p>
+                            <p className="text-xs text-zinc-500 mt-1">or click to browse · multiple files supported</p>
                         </div>
                     </div>
                 )}
             </div>
+
+            {/* Selected files list */}
+            {hasFiles && (
+                <div className="space-y-1 px-1">
+                    {selectedFiles.map((file, idx) => (
+                        <div key={`${file.name}-${idx}`} className="flex items-center gap-2 text-xs">
+                            <FileText className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                            <span className="text-zinc-300 truncate">{file.name}</span>
+                            <span className="text-zinc-600 shrink-0">
+                                ({(file.size / 1024).toFixed(1)} KB)
+                            </span>
+                        </div>
+                    ))}
+                </div>
+            )}
+
             {error && (
                 <p className="text-xs text-rose-400 ml-1">{error}</p>
             )}
