@@ -7,7 +7,7 @@ import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { uploadAndOptimize } from '../services/api';
 import { usePlans } from '../context/PlansContext';
-import { generateUUID, savePlanBlobs, extractStatsFromCSV, parseBlobToCSV } from '../utils/helpers';
+import { generateUUID, savePlanBlobs, extractStatsFromJSON, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
 
 const REQUIRED_COLUMNS = ['code', 'item_number', 'description', 'colour', 'material', 'quantity'];
 
@@ -48,12 +48,21 @@ export default function CreateNewPlan() {
                 setEmailSent(true);
             }
 
-            // Step 2: Parse the first sheet for stats display only
+            // Step 2: Parse sheets for stats display (find production data sheet, skip Dashboard)
             let stats = null;
             try {
-                const csvText = await parseBlobToCSV(blob);
-                if (csvText && csvText.trim()) {
-                    stats = extractStatsFromCSV(csvText);
+                const allSheets = await parseAllSheets(blob);
+                const prodSheet = allSheets.find(s => {
+                    if (!s.json || s.json.length === 0) return false;
+                    const keys = Object.keys(s.json[0]).map(k => k.toLowerCase());
+                    return keys.some(k => k === 'qty' || k === 'quantity') &&
+                        keys.some(k => k.includes('machine') || k.includes('shift'));
+                }) || allSheets.find(s => s.json && s.json.length > 0 && s.name.toLowerCase() !== 'dashboard');
+
+                if (prodSheet) {
+                    stats = prodSheet.json
+                        ? extractStatsFromJSON(prodSheet.json)
+                        : extractStatsFromCSV(prodSheet.csv);
                 }
             } catch (statsErr) {
                 console.warn('Stats extraction failed (non-critical):', statsErr);
@@ -61,9 +70,14 @@ export default function CreateNewPlan() {
 
             // Step 3: Save blob to IndexedDB
             const planId = generateUUID();
-            const planName = files.length === 1
-                ? files[0].name.replace(/\.[^/.]+$/, '') + ' — Optimized'
-                : `${files.length} Files — Optimized`;
+            const now = new Date();
+            const dateStr = now.toLocaleDateString('en-US', {
+                month: 'short', day: 'numeric', year: 'numeric',
+            });
+            const timeStr = now.toLocaleTimeString('en-US', {
+                hour: 'numeric', minute: '2-digit', hour12: true,
+            });
+            const planName = `Plan — ${dateStr} ${timeStr}`;
 
             const plan = {
                 id: planId,

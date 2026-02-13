@@ -106,13 +106,22 @@ export default function PlanDetails() {
 
                         setSheets(displaySheets);
 
-                        // Extract stats from the first sheet (production schedule)
+                        // Extract stats from the first production data sheet (skip Dashboard)
                         if (!meta.stats) {
-                            const firstSheet = allSheets[0];
-                            const parsed = firstSheet.json
-                                ? extractStatsFromJSON(firstSheet.json)
-                                : extractStatsFromCSV(firstSheet.csv);
-                            if (parsed) setStats(parsed);
+                            // Find a sheet with production columns (Qty, Machine, Shift)
+                            const prodSheet = allSheets.find(s => {
+                                if (!s.json || s.json.length === 0) return false;
+                                const keys = Object.keys(s.json[0]).map(k => k.toLowerCase());
+                                return keys.some(k => k === 'qty' || k === 'quantity') &&
+                                    keys.some(k => k.includes('machine') || k.includes('shift'));
+                            }) || allSheets.find(s => s.json && s.json.length > 0 && s.name.toLowerCase() !== 'dashboard');
+
+                            if (prodSheet) {
+                                const parsed = prodSheet.json
+                                    ? extractStatsFromJSON(prodSheet.json)
+                                    : extractStatsFromCSV(prodSheet.csv);
+                                if (parsed) setStats(parsed);
+                            }
                         }
                     }
                 }
