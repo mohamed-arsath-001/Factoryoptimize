@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Upload, Sparkles, CheckCircle, AlertCircle, Mail } from 'lucide-react';
+import { Upload, Sparkles, CheckCircle, AlertCircle } from 'lucide-react';
 import FileUpload from '../components/ui/FileUpload';
 import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
@@ -44,7 +44,7 @@ export default function CreateNewPlan() {
             }
 
             // Check email delivery status
-            if (n8nDelivery === 'Email Sent Successfully') {
+            if (n8nDelivery && n8nDelivery.includes('Email Sent')) {
                 setEmailSent(true);
             }
 
@@ -192,9 +192,9 @@ export default function CreateNewPlan() {
                             </div>
                         </div>
                         <div className="text-center">
-                            <p className="text-sm font-semibold text-white">Optimizing Production Schedule</p>
+                            <p className="text-sm font-semibold text-white">Calibrating with Master Database & Optimizing Schedule...</p>
                             <p className="text-xs text-zinc-500 mt-1">
-                                Processing {files.length} file{files.length > 1 ? 's' : ''}... This may take a moment.
+                                Processing {files.length} file{files.length > 1 ? 's' : ''}. This may take a moment.
                             </p>
                         </div>
                         <LoadingSpinner size="sm" text="" />
@@ -221,11 +221,11 @@ export default function CreateNewPlan() {
                     {emailSent && (
                         <div className="flex items-center gap-3 p-4 rounded-xl bg-green-500/10 border border-green-500/20 animate-slide-in">
                             <div className="w-9 h-9 rounded-lg bg-green-500/15 flex items-center justify-center shrink-0">
-                                <Mail className="w-4.5 h-4.5 text-green-400" />
+                                <CheckCircle className="w-5 h-5 text-green-400" />
                             </div>
                             <div>
-                                <p className="text-sm font-medium text-green-300">Email Sent Successfully</p>
-                                <p className="text-xs text-green-400/70">The optimized schedule has been delivered to your inbox.</p>
+                                <p className="text-sm font-medium text-green-300">✅ Optimization Complete</p>
+                                <p className="text-xs text-green-400/70">Schedule has been emailed to the Production Manager.</p>
                             </div>
                         </div>
                     )}

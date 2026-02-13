@@ -20,12 +20,23 @@ import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { getStoredPlan } from '../services/api';
 import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
 
+// Define the exact columns and order for the schedule table
+const SCHEDULE_COLUMNS = [
+    { key: 'Order_ID', label: 'Order ID' },
+    { key: 'Site', label: 'Site' },
+    { key: 'Machine', label: 'Machine' },
+    { key: 'Product', label: 'Product' },
+    { key: 'Qty', label: 'Qty' },
+    { key: 'Shift', label: 'Shift' },
+    { key: 'Assigned_Team', label: 'Assigned Team', highlight: true },
+];
+
 export default function PlanDetails() {
     const { id } = useParams();
     const navigate = useNavigate();
     const [plan, setPlan] = useState(null);
     const [stats, setStats] = useState(null);
-    const [sheets, setSheets] = useState([]); // Array of { name, headers, rows }
+    const [sheets, setSheets] = useState([]); // Array of { name, headers, rows, rawHeaders }
     const [activeSheet, setActiveSheet] = useState(0);
     const [loading, setLoading] = useState(true);
     const [downloading, setDownloading] = useState(false);
@@ -48,7 +59,7 @@ export default function PlanDetails() {
             try {
                 const blobs = await getPlanBlobs(id);
                 if (blobs?.optimizedBlob) {
-                    // Parse ALL sheets from the Excel blob for display
+                    // Parse ALL sheets from the blob for display
                     const allSheets = await parseAllSheets(blobs.optimizedBlob);
 
                     if (allSheets.length > 0) {
@@ -56,11 +67,15 @@ export default function PlanDetails() {
                         const displaySheets = allSheets.map(sheet => {
                             const lines = sheet.csv.trim().split('\n');
                             let headers = [];
+                            let rawHeaders = [];
                             let rows = [];
 
                             if (lines.length > 1) {
-                                headers = lines[0].split(',').map(h => h.trim());
-                                rows = lines.slice(1, 51).map(line =>
+                                rawHeaders = lines[0].split(',').map(h => h.trim());
+                                headers = rawHeaders;
+
+                                const dataRows = lines.slice(1).filter(l => l.trim());
+                                rows = dataRows.slice(0, 100).map(line =>
                                     line.split(',').map(c => c.trim())
                                 );
                             }
@@ -68,6 +83,7 @@ export default function PlanDetails() {
                             return {
                                 name: sheet.name,
                                 headers,
+                                rawHeaders,
                                 rows,
                                 totalRows: lines.length - 1,
                             };
@@ -96,7 +112,6 @@ export default function PlanDetails() {
         try {
             const blobs = await getPlanBlobs(id);
             if (blobs?.optimizedBlob) {
-                // Download the ORIGINAL blob directly — preserves all sheets & formatting
                 const filename = plan?.optimizedFilename || 'optimized_schedule.xlsx';
                 downloadBlob(blobs.optimizedBlob, filename);
             }
@@ -120,7 +135,6 @@ export default function PlanDetails() {
         );
     }
 
-    // Determine download button label based on file extension
     const isExcel = plan.optimizedFilename && /\.(xlsx|xls)$/i.test(plan.optimizedFilename);
     const downloadLabel = isExcel ? 'Download Excel' : 'Download CSV';
 
@@ -132,6 +146,41 @@ export default function PlanDetails() {
     ];
 
     const currentSheet = sheets[activeSheet];
+
+    // Build ordered table data using SCHEDULE_COLUMNS if possible
+    function getOrderedTableData(sheet) {
+        if (!sheet || !sheet.rawHeaders || sheet.rawHeaders.length === 0) return null;
+
+        // Check if this sheet contains schedule data (has at least some of our expected columns)
+        const matchedColumns = SCHEDULE_COLUMNS.filter(col =>
+            sheet.rawHeaders.some(h => h.toLowerCase() === col.key.toLowerCase())
+        );
+
+        // If at least 3 columns match, use ordered display
+        if (matchedColumns.length >= 3) {
+            // Map each desired column to its index in the raw headers
+            const columnMap = matchedColumns.map(col => {
+                const idx = sheet.rawHeaders.findIndex(h => h.toLowerCase() === col.key.toLowerCase());
+                return { ...col, idx };
+            }).filter(col => col.idx !== -1);
+
+            return {
+                headers: columnMap.map(c => c.label),
+                highlightIndices: columnMap.map((c, i) => c.highlight ? i : -1).filter(i => i !== -1),
+                rows: sheet.rows.map(row =>
+                    columnMap.map(c => row[c.idx] || '–')
+                ),
+            };
+        }
+
+        // Fallback: return original data
+        return null;
+    }
+
+    const orderedData = currentSheet ? getOrderedTableData(currentSheet) : null;
+    const displayHeaders = orderedData ? orderedData.headers : (currentSheet?.headers || []);
+    const displayRows = orderedData ? orderedData.rows : (currentSheet?.rows || []);
+    const highlightIndices = orderedData ? orderedData.highlightIndices : [];
 
     return (
         <div className="space-y-6">
@@ -194,8 +243,8 @@ export default function PlanDetails() {
                                     key={idx}
                                     onClick={() => setActiveSheet(idx)}
                                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${activeSheet === idx
-                                            ? 'gradient-purple text-white shadow-md shadow-purple-500/20'
-                                            : 'text-zinc-400 hover:text-white hover:bg-dark-hover border border-transparent hover:border-dark-border'
+                                        ? 'gradient-purple text-white shadow-md shadow-purple-500/20'
+                                        : 'text-zinc-400 hover:text-white hover:bg-dark-hover border border-transparent hover:border-dark-border'
                                         }`}
                                 >
                                     {sheet.name}
@@ -207,31 +256,43 @@ export default function PlanDetails() {
                     {/* Table Header */}
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-sm font-semibold text-zinc-300">
-                            {sheets.length > 1 ? currentSheet?.name : 'Machine Assignments'}
+                            {sheets.length > 1 ? currentSheet?.name : 'Production Schedule'}
                             <span className="ml-2 text-xs text-zinc-600 font-normal">
-                                ({currentSheet?.rows.length ?? 0} rows{currentSheet?.totalRows > 50 ? ` of ${currentSheet.totalRows}` : ''})
+                                ({displayRows.length} rows{currentSheet?.totalRows > 100 ? ` of ${currentSheet.totalRows}` : ''})
                             </span>
                         </h3>
                     </div>
 
                     {/* Table */}
-                    {currentSheet && currentSheet.rows.length > 0 ? (
+                    {currentSheet && displayRows.length > 0 ? (
                         <div className="overflow-x-auto rounded-lg border border-dark-border">
                             <table className="w-full text-xs">
                                 <thead>
                                     <tr className="bg-dark-tertiary/50">
-                                        {currentSheet.headers.map((h, hi) => (
-                                            <th key={hi} className="px-3 py-2.5 text-left font-semibold text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                                        {displayHeaders.map((h, hi) => (
+                                            <th
+                                                key={hi}
+                                                className={`px-3 py-2.5 text-left font-semibold uppercase tracking-wider whitespace-nowrap ${highlightIndices.includes(hi)
+                                                        ? 'text-blue-400'
+                                                        : 'text-zinc-400'
+                                                    }`}
+                                            >
                                                 {h}
                                             </th>
                                         ))}
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-dark-border">
-                                    {currentSheet.rows.map((row, ri) => (
+                                    {displayRows.map((row, ri) => (
                                         <tr key={ri} className="hover:bg-dark-hover/50 transition-colors">
                                             {row.map((cell, ci) => (
-                                                <td key={ci} className="px-3 py-2 text-zinc-300 whitespace-nowrap">
+                                                <td
+                                                    key={ci}
+                                                    className={`px-3 py-2 whitespace-nowrap ${highlightIndices.includes(ci)
+                                                            ? 'text-blue-400 font-medium'
+                                                            : 'text-zinc-300'
+                                                        }`}
+                                                >
                                                     {cell || '–'}
                                                 </td>
                                             ))}

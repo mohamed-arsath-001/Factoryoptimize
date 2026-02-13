@@ -1,4 +1,4 @@
-const RENDER_URL = 'https://wood-production-scheduler-api.onrender.com/optimize';
+const RENDER_URL = 'https://wood-scheduler.onrender.com/optimize';
 
 /**
  * Convert an array of objects to a CSV string.
