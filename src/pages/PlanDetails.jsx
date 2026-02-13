@@ -31,6 +31,13 @@ const SCHEDULE_COLUMNS = [
     { key: 'Assigned_Team', label: 'Assigned Team', highlight: true },
 ];
 
+// Check if cached stats have stale/numeric shift entries that need re-parsing
+function hasStaleShiftStats(stats) {
+    if (!stats?.shiftDistribution) return true;
+    // If distribution has numeric-only names, it's stale
+    return stats.shiftDistribution.some(entry => /^\d+$/.test(entry.name));
+}
+
 export default function PlanDetails() {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -51,8 +58,8 @@ export default function PlanDetails() {
             }
             setPlan(meta);
 
-            // Try to load stats from metadata first
-            if (meta.stats) {
+            // Try to load stats from metadata first (skip if stale shift data)
+            if (meta.stats && !hasStaleShiftStats(meta.stats)) {
                 setStats(meta.stats);
             }
 
@@ -164,11 +171,19 @@ export default function PlanDetails() {
                 return { ...col, idx };
             }).filter(col => col.idx !== -1);
 
+            // Find the Shift column index in ordered columns
+            const shiftOrderedIdx = columnMap.findIndex(c => c.key.toLowerCase() === 'shift');
+
             return {
                 headers: columnMap.map(c => c.label),
                 highlightIndices: columnMap.map((c, i) => c.highlight ? i : -1).filter(i => i !== -1),
                 rows: sheet.rows.map(row =>
-                    columnMap.map(c => row[c.idx] || '–')
+                    columnMap.map((c, ci) => {
+                        const val = row[c.idx] || '–';
+                        // Replace numeric-only Shift values with dash
+                        if (ci === shiftOrderedIdx && /^\d+$/.test(val)) return '–';
+                        return val;
+                    })
                 ),
             };
         }
@@ -273,8 +288,8 @@ export default function PlanDetails() {
                                             <th
                                                 key={hi}
                                                 className={`px-3 py-2.5 text-left font-semibold uppercase tracking-wider whitespace-nowrap ${highlightIndices.includes(hi)
-                                                        ? 'text-blue-400'
-                                                        : 'text-zinc-400'
+                                                    ? 'text-blue-400'
+                                                    : 'text-zinc-400'
                                                     }`}
                                             >
                                                 {h}
@@ -289,8 +304,8 @@ export default function PlanDetails() {
                                                 <td
                                                     key={ci}
                                                     className={`px-3 py-2 whitespace-nowrap ${highlightIndices.includes(ci)
-                                                            ? 'text-blue-400 font-medium'
-                                                            : 'text-zinc-300'
+                                                        ? 'text-blue-400 font-medium'
+                                                        : 'text-zinc-300'
                                                         }`}
                                                 >
                                                     {cell || '–'}
