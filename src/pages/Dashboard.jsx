@@ -58,12 +58,6 @@ export default function Dashboard() {
             icon: Timer,
             color: 'green',
         },
-        {
-            title: 'Orders With Teams',
-            value: stats?.ordersWithTeams ?? 96,
-            icon: Users,
-            color: 'amber',
-        },
     ];
 
     if (loading) return <LoadingSpinner text="Loading dashboard..." />;
@@ -72,7 +66,7 @@ export default function Dashboard() {
         <div className="space-y-6">
             {/* Header */}
             <div>
-                <h1 className="text-2xl font-bold text-white">Production Plan Optimizer</h1>
+                <h1 className="text-2xl font-bold text-white">MASTER PRODUCTION PLAN</h1>
                 <p className="text-sm text-zinc-500 mt-1">
                     Overview of your latest production data & insights
                 </p>

@@ -22,13 +22,14 @@ import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromJSON, extractSt
 
 // Define the exact columns and order for the schedule table
 const SCHEDULE_COLUMNS = [
-    { key: 'Order_ID', label: 'Order ID' },
+    { key: 'Production_Line', label: 'Production Line' },
+    { key: 'Planned_Day', label: 'Planned Day' },
+    { key: 'Start_Time', label: 'Start Time' },
+    { key: 'End_Time', label: 'End Time' },
+    { key: 'Setup_Time_Mins', label: 'Setup Time (Mins)', highlight: true },
+    { key: 'Run_Time_Mins', label: 'Run Time (Mins)' },
     { key: 'Site', label: 'Site' },
-    { key: 'Machine', label: 'Machine' },
-    { key: 'Product', label: 'Product' },
-    { key: 'Qty', label: 'Qty' },
-    { key: 'Shift', label: 'Shift' },
-    { key: 'Assigned_Team', label: 'Assigned Team', highlight: true },
+    { key: 'Description', label: 'Item Description' },
 ];
 
 
@@ -169,7 +170,6 @@ export default function PlanDetails() {
         { title: 'Total Orders', value: stats?.totalOrders ?? '–', icon: ClipboardList, color: 'purple' },
         { title: 'Total Units', value: stats?.totalUnits?.toLocaleString() ?? '–', icon: Package, color: 'blue' },
         { title: 'Avg Batch Duration', value: stats?.avgBatchDuration ? `${Math.round(stats.avgBatchDuration)}m` : '–', icon: Timer, color: 'green' },
-        { title: 'Orders With Teams', value: stats?.ordersWithTeams ?? '–', icon: Users, color: 'amber' },
     ];
 
     const currentSheet = sheets[activeSheet];
@@ -191,12 +191,24 @@ export default function PlanDetails() {
                 return { ...col, idx };
             }).filter(col => col.idx !== -1);
 
+            // Append remaining original columns
+            const usedIndices = new Set(columnMap.map(c => c.idx));
+            sheet.rawHeaders.forEach((h, idx) => {
+                if (!usedIndices.has(idx)) {
+                    columnMap.push({ key: h, label: h, idx, highlight: false });
+                }
+            });
+
+            const setupTimeIdx = sheet.rawHeaders.findIndex(h => h.toLowerCase() === 'setup_time_mins');
+
             return {
                 headers: columnMap.map(c => c.label),
                 highlightIndices: columnMap.map((c, i) => c.highlight ? i : -1).filter(i => i !== -1),
-                rows: sheet.rows.map(row =>
-                    columnMap.map(c => row[c.idx] || '–')
-                ),
+                rows: sheet.rows.map(row => {
+                    const cells = columnMap.map(c => row[c.idx] || '–');
+                    const hasSetup = setupTimeIdx !== -1 && parseFloat(row[setupTimeIdx]) > 0;
+                    return { cells, hasSetup };
+                }),
             };
         }
 
@@ -300,7 +312,7 @@ export default function PlanDetails() {
                                             <th
                                                 key={hi}
                                                 className={`px-3 py-2.5 text-left font-semibold uppercase tracking-wider whitespace-nowrap ${highlightIndices.includes(hi)
-                                                    ? 'text-blue-400'
+                                                    ? 'text-amber-400'
                                                     : 'text-zinc-400'
                                                     }`}
                                             >
@@ -310,21 +322,25 @@ export default function PlanDetails() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-dark-border">
-                                    {displayRows.map((row, ri) => (
-                                        <tr key={ri} className="hover:bg-dark-hover/50 transition-colors">
-                                            {row.map((cell, ci) => (
-                                                <td
-                                                    key={ci}
-                                                    className={`px-3 py-2 whitespace-nowrap ${highlightIndices.includes(ci)
-                                                        ? 'text-blue-400 font-medium'
-                                                        : 'text-zinc-300'
-                                                        }`}
-                                                >
-                                                    {cell || '–'}
-                                                </td>
-                                            ))}
-                                        </tr>
-                                    ))}
+                                    {displayRows.map((row, ri) => {
+                                        const cells = Array.isArray(row) ? row : row.cells;
+                                        const isSetupRow = !Array.isArray(row) && row.hasSetup;
+                                        return (
+                                            <tr key={ri} className={`transition-colors ${isSetupRow ? 'bg-amber-500/10 hover:bg-amber-500/20' : 'hover:bg-dark-hover/50'}`}>
+                                                {cells.map((cell, ci) => (
+                                                    <td
+                                                        key={ci}
+                                                        className={`px-3 py-2 whitespace-nowrap ${highlightIndices.includes(ci)
+                                                            ? 'text-amber-400 font-medium'
+                                                            : 'text-zinc-300'
+                                                            }`}
+                                                    >
+                                                        {cell || '–'}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        )
+                                    })}
                                 </tbody>
                             </table>
                         </div>

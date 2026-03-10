@@ -185,15 +185,13 @@ export function extractStatsFromJSON(rows) {
         const sample = rows[0];
         const codeKey = findKey(sample, 'code', 'order_code', 'order_id');
         const qtyKey = findKey(sample, 'quantity', 'qty');
-        const machineKey = findKey(sample, 'machine');
-        const durationKey = findKey(sample, 'duration_mins', 'duration', 'time');
+        const machineKey = findKey(sample, 'machine', 'production_line');
+        const durationKey = findKey(sample, 'duration_mins', 'duration', 'time', 'run_time_mins');
         const shiftKey = findKey(sample, 'shift');
-        const teamKey = findKey(sample, 'assigned_team', 'team');
 
         const uniqueOrders = new Set();
         let totalUnits = 0;
         let totalDuration = 0;
-        let withTeams = 0;
         const machines = {};
         const shifts = {};
 
@@ -201,7 +199,6 @@ export function extractStatsFromJSON(rows) {
             if (codeKey && row[codeKey]) uniqueOrders.add(String(row[codeKey]));
             if (qtyKey) totalUnits += parseInt(row[qtyKey]) || 0;
             if (durationKey) totalDuration += parseFloat(row[durationKey]) || 0;
-            if (teamKey && row[teamKey]) withTeams++;
             if (machineKey && row[machineKey]) {
                 const m = String(row[machineKey]);
                 machines[m] = (machines[m] || 0) + 1;
@@ -228,7 +225,6 @@ export function extractStatsFromJSON(rows) {
             totalOrders: uniqueOrders.size || rows.length,
             totalUnits,
             avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
-            ordersWithTeams: withTeams,
             machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
             shiftDistribution: Object.entries(groupedShifts).map(([name, value]) => ({ name, value })),
             totalRows: rows.length,
@@ -253,15 +249,13 @@ export function extractStatsFromCSV(csvText) {
 
         const codeIdx = headers.findIndex((h) => h === 'code' || h === 'order_code');
         const qtyIdx = headers.findIndex((h) => h === 'quantity' || h === 'qty');
-        const machineIdx = headers.findIndex((h) => h.includes('machine'));
-        const durationIdx = headers.findIndex((h) => h.includes('duration') || h.includes('time'));
+        const machineIdx = headers.findIndex((h) => h.includes('machine') || h.includes('production_line'));
+        const durationIdx = headers.findIndex((h) => h.includes('duration') || h.includes('time') || h.includes('run_time'));
         const shiftIdx = headers.findIndex((h) => h.includes('shift'));
-        const teamIdx = headers.findIndex((h) => h.includes('team'));
 
         const uniqueOrders = new Set();
         let totalUnits = 0;
         let totalDuration = 0;
-        let withTeams = 0;
         const machines = {};
         const shifts = {};
 
@@ -271,7 +265,6 @@ export function extractStatsFromCSV(csvText) {
                 if (codeIdx >= 0) uniqueOrders.add(cols[codeIdx]);
                 if (qtyIdx >= 0) totalUnits += parseInt(cols[qtyIdx]) || 0;
                 if (durationIdx >= 0) totalDuration += parseFloat(cols[durationIdx]) || 0;
-                if (teamIdx >= 0 && cols[teamIdx]) withTeams++;
                 if (machineIdx >= 0 && cols[machineIdx]) {
                     const m = cols[machineIdx];
                     machines[m] = (machines[m] || 0) + 1;
@@ -302,7 +295,6 @@ export function extractStatsFromCSV(csvText) {
             totalOrders: uniqueOrders.size || rows.length,
             totalUnits,
             avgBatchDuration: rows.length > 0 ? totalDuration / rows.length : 0,
-            ordersWithTeams: withTeams,
             machineUtilization: Object.entries(machines).map(([name, count]) => ({ name, count })),
             shiftDistribution: Object.entries(groupedShifts).map(([name, value]) => ({ name, value })),
             totalRows: rows.length,

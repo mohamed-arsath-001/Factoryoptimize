@@ -34,8 +34,8 @@ export default function Sidebar() {
                         <Factory className="w-5 h-5 text-white" />
                     </div>
                     <div>
-                        <h1 className="text-sm font-bold text-white tracking-tight">FactoryFlow</h1>
-                        <p className="text-[10px] text-zinc-500 leading-none mt-0.5">Production Optimizer</p>
+                        <h1 className="text-sm font-bold text-white tracking-tight">MASTER PLAN</h1>
+                        <p className="text-[10px] text-zinc-500 leading-none mt-0.5">Production Engine</p>
                     </div>
                 </div>
             </div>
