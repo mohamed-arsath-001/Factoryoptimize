@@ -1,4 +1,4 @@
-const RENDER_URL = 'http://localhost:8000/optimize';
+const RENDER_URL = 'https://factory-flow-backend-s2ns.onrender.com/optimize';
 
 /**
  * Convert an array of objects to a CSV string.
