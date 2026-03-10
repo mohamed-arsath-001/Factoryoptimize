@@ -77,9 +77,11 @@ export default function CreateNewPlan() {
             const timeStr = now.toLocaleTimeString('en-US', {
                 hour: 'numeric', minute: '2-digit', hour12: true,
             });
+            const planName = `Plan — ${dateStr} ${timeStr}`;
+
             const plan = {
                 id: planId,
-                name: files.map(f => f.name).join(', '),
+                name: planName,
                 uploadDate: new Date().toISOString(),
                 originalFilename: files.map(f => f.name).join(', '),
                 optimizedFilename: filename,

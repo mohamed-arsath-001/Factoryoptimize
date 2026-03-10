@@ -106,7 +106,7 @@ export default function PlanDetails() {
                                 jsonRows,
                                 totalRows,
                             };
-                        });
+                        }).filter(sheet => sheet.name.toLowerCase() !== 'dashboard');
 
                         setSheets(displaySheets);
 
