@@ -18,7 +18,10 @@ import Button from '../components/ui/Button';
 import Card from '../components/ui/Card';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { getStoredPlan } from '../services/api';
-import { getPlanBlobs, downloadBlob, formatDate, extractStatsFromJSON, extractStatsFromCSV, parseAllSheets } from '../utils/helpers';
+import {
+    getPlanBlobs, downloadBlob, downloadCSVFromString,
+    formatDate, extractStatsFromJSON, extractStatsFromCSV, parseAllSheets
+} from '../utils/helpers';
 
 // Define the exact columns and order for the schedule table
 const SCHEDULE_COLUMNS = [
@@ -135,7 +138,7 @@ export default function PlanDetails() {
         loadPlan();
     }, [id]);
 
-    async function handleDownload() {
+    async function handleDownloadAll() {
         setDownloading(true);
         try {
             const blobs = await getPlanBlobs(id);
@@ -148,6 +151,17 @@ export default function PlanDetails() {
         } finally {
             setDownloading(false);
         }
+    }
+
+    function handleDownloadCurrentSite() {
+        if (!currentSheet || !currentSheet.csv) return;
+
+        let filename = `${currentSheet.name}_schedule.csv`;
+        // Ensure valid filename
+        filename = filename.replace(/[^a-z0-9_\-\.]/gi, '_').toLowerCase();
+
+        // Provide the CSV string specific to this tab
+        downloadCSVFromString(currentSheet.csv, filename);
     }
 
     if (loading) return <LoadingSpinner text="Loading plan details..." />;
@@ -252,10 +266,25 @@ export default function PlanDetails() {
                         </div>
                     </div>
                 </div>
-                <Button onClick={handleDownload} loading={downloading}>
-                    <Download className="w-4 h-4" />
-                    {downloadLabel}
-                </Button>
+
+                {/* Download Options */}
+                {sheets.length > 1 ? (
+                    <div className="flex items-center gap-2">
+                        <Button variant="secondary" onClick={handleDownloadCurrentSite} className="text-zinc-300">
+                            <Download className="w-4 h-4" />
+                            Current Site (.csv)
+                        </Button>
+                        <Button onClick={handleDownloadAll} loading={downloading}>
+                            <Download className="w-4 h-4" />
+                            All Sites (.xlsx)
+                        </Button>
+                    </div>
+                ) : (
+                    <Button onClick={handleDownloadAll} loading={downloading}>
+                        <Download className="w-4 h-4" />
+                        Download Schedule
+                    </Button>
+                )}
             </div>
 
             {/* Stats */}

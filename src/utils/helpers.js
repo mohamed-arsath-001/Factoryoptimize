@@ -31,6 +31,18 @@ export function downloadBlob(blob, filename) {
     URL.revokeObjectURL(url);
 }
 
+export function downloadCSVFromString(csvString, filename) {
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 /**
  * Detect if a blob is an Excel file by MIME type or binary signature.
  */

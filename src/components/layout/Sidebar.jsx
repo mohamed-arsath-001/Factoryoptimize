@@ -21,8 +21,7 @@ export default function Sidebar() {
     const grouped = groupPlansByMonth(plans);
 
     const navItems = [
-        { to: '/', icon: LayoutDashboard, label: 'Dashboard' },
-        { to: '/create-plan', icon: FilePlus, label: 'Create New Plan' },
+        { to: '/', icon: FilePlus, label: 'Create New Plan' },
     ];
 
     return (
@@ -99,7 +98,7 @@ export default function Sidebar() {
                                                     }
                                                 >
                                                     <FileText className="w-3 h-3 shrink-0" />
-                                                    <span className="truncate">{plan.name || formatDate(plan.uploadDate)}</span>
+                                                    <span className="truncate">{plan.originalFilename || plan.name || formatDate(plan.uploadDate)}</span>
                                                 </NavLink>
                                                 <button
                                                     onClick={(e) => {
