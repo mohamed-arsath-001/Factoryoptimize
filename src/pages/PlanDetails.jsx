@@ -26,6 +26,7 @@ import {
 // Define the exact columns and order for the schedule table
 const SCHEDULE_COLUMNS = [
     { key: 'Production_Line', label: 'Production Line' },
+    { key: 'Batch_ID', label: 'Batch ID' },
     { key: 'Planned_Day', label: 'Planned Day' },
     { key: 'Start_Time', label: 'Start Time' },
     { key: 'End_Time', label: 'End Time' },
@@ -153,17 +154,6 @@ export default function PlanDetails() {
         }
     }
 
-    function handleDownloadCurrentSite() {
-        if (!currentSheet || !currentSheet.csv) return;
-
-        let filename = `${currentSheet.name}_schedule.csv`;
-        // Ensure valid filename
-        filename = filename.replace(/[^a-z0-9_\-\.]/gi, '_').toLowerCase();
-
-        // Provide the CSV string specific to this tab
-        downloadCSVFromString(currentSheet.csv, filename);
-    }
-
     if (loading) return <LoadingSpinner text="Loading plan details..." />;
 
     if (!plan) {
@@ -268,23 +258,10 @@ export default function PlanDetails() {
                 </div>
 
                 {/* Download Options */}
-                {sheets.length > 1 ? (
-                    <div className="flex items-center gap-2">
-                        <Button variant="secondary" onClick={handleDownloadCurrentSite} className="text-zinc-300">
-                            <Download className="w-4 h-4" />
-                            Current Site (.csv)
-                        </Button>
-                        <Button onClick={handleDownloadAll} loading={downloading}>
-                            <Download className="w-4 h-4" />
-                            All Sites (.xlsx)
-                        </Button>
-                    </div>
-                ) : (
-                    <Button onClick={handleDownloadAll} loading={downloading}>
-                        <Download className="w-4 h-4" />
-                        Download Schedule
-                    </Button>
-                )}
+                <Button onClick={handleDownloadAll} loading={downloading}>
+                    <Download className="w-4 h-4" />
+                    {downloadLabel}
+                </Button>
             </div>
 
             {/* Stats */}
