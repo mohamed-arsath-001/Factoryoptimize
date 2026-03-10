@@ -60,11 +60,22 @@ export async function uploadAndOptimize(files) {
 
         if (isBinaryType) {
             const blob = await response.blob();
-            let filename = 'optimized_schedule.xlsx';
-            const disposition = response.headers.get('Content-Disposition');
-            if (disposition) {
-                const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-                if (match) filename = match[1].replace(/['"]/g, '');
+            let filename = 'optimized_schedule.xlsx'; // Fallback
+            const disposition = response.headers.get('content-disposition') || response.headers.get('Content-Disposition');
+
+            if (disposition && disposition.indexOf('attachment') !== -1) {
+                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const matches = filenameRegex.exec(disposition);
+                if (matches != null && matches[1]) {
+                    filename = matches[1].replace(/['"]/g, '');
+                }
+            } else if (disposition) {
+                // Fallback if 'attachment' is omitted for some reason
+                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+                const matches = filenameRegex.exec(disposition);
+                if (matches != null && matches[1]) {
+                    filename = matches[1].replace(/['"]/g, '');
+                }
             }
             return { blob, filename, n8nDelivery: null };
         }
